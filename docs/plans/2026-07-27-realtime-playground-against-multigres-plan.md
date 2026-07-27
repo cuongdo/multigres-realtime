@@ -386,7 +386,7 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # Wait until `curl -sf` against $1 succeeds, or die after WAIT_TIMEOUT.
 wait_for_http() {
   local url="$1" label="$2" waited=0
-  until curl -sf "$url" >/dev/null 2>&1; do
+  until curl -sf --max-time 5 "$url" >/dev/null 2>&1; do
     sleep 2
     waited=$((waited + 2))
     if [ "$waited" -ge "$WAIT_TIMEOUT" ]; then
@@ -404,7 +404,11 @@ kill_pidfile() {
     if kill -0 "$pid" 2>/dev/null; then
       log "Stopping $label (pid $pid)"
       kill "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
+      for _ in 1 2 3 4 5; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+      done
+      kill -9 "$pid" 2>/dev/null || true
     fi
     rm -f "$pidfile"
   fi
