@@ -103,7 +103,31 @@ kill_pidfile() {
 # ----------------------------------------------------------------------------
 
 cmd_up() {
-  die "cmd_up not yet implemented"
+  mkdir -p "$RUN_DIR"
+
+  log "Bringing up the Multigres cluster"
+  "$SCRIPT_DIR/multigres-realtime.sh" up
+
+  log "Ensuring Realtime's metadata DB is running"
+  (cd "$REALTIME_DIR" && mise run db-start)
+
+  log "Starting Realtime (mix phx.server) on :$REALTIME_PORT"
+  kill_pidfile "$RUN_DIR/realtime.pid" "Realtime"
+  (
+    cd "$REALTIME_DIR"
+    PORT="$REALTIME_PORT" nohup mix phx.server > "$RUN_DIR/realtime.log" 2>&1 &
+    echo $! > "$RUN_DIR/realtime.pid"
+  )
+
+  sleep 2
+  if ! kill -0 "$(cat "$RUN_DIR/realtime.pid")" 2>/dev/null; then
+    warn "Realtime exited immediately — recent log output:"
+    tail -n 40 "$RUN_DIR/realtime.log" || true
+    die "Realtime failed to start. If this is the first run, make sure you've run 'mix ecto.setup' in $REALTIME_DIR."
+  fi
+
+  wait_for_http "http://localhost:${REALTIME_PORT}/status" "Realtime"
+  log "Realtime is up (logs: $RUN_DIR/realtime.log)"
 }
 
 cmd_down() {
