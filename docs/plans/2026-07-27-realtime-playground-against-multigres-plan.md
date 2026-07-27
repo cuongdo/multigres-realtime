@@ -576,6 +576,7 @@ git commit -m "cmd_up: start Realtime as a persistent background server"
     GATEWAY_HOST="$GATEWAY_HOST" GATEWAY_PORT="$GATEWAY_PORT" \
     GATEWAY_USER="$GATEWAY_USER" GATEWAY_PASSWORD="$GATEWAY_PASSWORD" GATEWAY_DB="$GATEWAY_DB" \
     PLAYGROUND_TENANT_ID="$PLAYGROUND_TENANT_ID" PLAYGROUND_JWT_SECRET="$PLAYGROUND_JWT_SECRET" \
+    GEN_RPC_TCP_SERVER_PORT=0 GEN_RPC_TCP_CLIENT_PORT=0 \
     mix run "$SETUP_SCRIPT" 2>"$RUN_DIR/playground_setup.log" | tail -1)"; then
     die "playground_setup.exs failed — see $RUN_DIR/playground_setup.log"
   fi
@@ -597,6 +598,21 @@ file) to catch a nonzero exit from `mix run` even though `tail` — the
 rightmost command in the pipe — exits 0. This mirrors the existing
 `if ! compose up ...; then ... die ...` pattern already used in
 `multigres-realtime.sh`'s `cmd_up`.
+
+**Why `GEN_RPC_TCP_SERVER_PORT=0 GEN_RPC_TCP_CLIENT_PORT=0`:** `mix run`
+boots the entire `:realtime` OTP application (same as `mix phx.server`
+does), including `gen_rpc`, which binds a fixed TCP port
+(`config/runtime.exs`, default 5369 via those same env vars) — the exact
+port Task 4's long-running `mix phx.server` already owns by this point in
+`cmd_up`. Without this override, `mix run "$SETUP_SCRIPT"` fails to boot at
+all (`:eaddrinuse` on `gen_rpc_server_tcp`) whenever Realtime is already
+running, which is always true here since this step runs right after
+"Realtime is up". Setting both to `0` tells `gen_rpc` to bind ephemeral,
+OS-assigned ports instead of the fixed default, avoiding the collision;
+`playground_setup.exs` never actually needs `gen_rpc` (it's a one-shot local
+script with no clustering), so which port it lands on doesn't matter. This
+only affects the short-lived `mix run` invocation — Task 4's `phx.server`
+keeps using the real fixed port for its own inter-node RPC needs.
 
 Also update the top-of-function comment area: no changes needed elsewhere.
 
