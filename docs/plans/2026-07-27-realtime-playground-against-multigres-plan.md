@@ -568,19 +568,31 @@ git commit -m "cmd_up: start Realtime as a persistent background server"
 ```bash
   log "Registering/updating the Multigres tenant and minting an anon JWT"
   local jwt
-  jwt="$(cd "$REALTIME_DIR" && \
+  if ! jwt="$(cd "$REALTIME_DIR" && \
     GATEWAY_HOST="$GATEWAY_HOST" GATEWAY_PORT="$GATEWAY_PORT" \
     GATEWAY_USER="$GATEWAY_USER" GATEWAY_PASSWORD="$GATEWAY_PASSWORD" GATEWAY_DB="$GATEWAY_DB" \
     PLAYGROUND_TENANT_ID="$PLAYGROUND_TENANT_ID" PLAYGROUND_JWT_SECRET="$PLAYGROUND_JWT_SECRET" \
-    mix run "$SETUP_SCRIPT" 2>&1 | tee "$RUN_DIR/playground_setup.log" | tail -1)"
+    mix run "$SETUP_SCRIPT" 2>"$RUN_DIR/playground_setup.log" | tail -1)"; then
+    die "playground_setup.exs failed — see $RUN_DIR/playground_setup.log"
+  fi
 
   [ -n "$jwt" ] || die "playground_setup.exs did not print a JWT — see $RUN_DIR/playground_setup.log"
   log "Minted anon JWT for tenant '${PLAYGROUND_TENANT_ID}'"
 ```
 
-(This mixes `playground_setup.exs`'s stderr log lines into
-`playground_setup.log` too via `2>&1 | tee`, for debugging — only the JWT
-itself is kept in the `jwt` variable via `tail -1`.)
+**Why not `2>&1 | tee ... | tail -1`:** merging stderr into the same stream
+as stdout before `tail -1` means that on failure, the last "line" captured
+would be `playground_setup.exs`'s own red `FAIL: ...` message (written to
+what was originally stderr) — which is non-empty, so a naive `[ -n "$jwt" ]`
+check would pass and silently write that error text into
+`PUBLIC_SUPABASE_KEY` in `.env` instead of catching the failure. Redirecting
+stderr straight to the log file (`2>"$RUN_DIR/playground_setup.log"`, no
+`tee`) keeps it out of the captured stdout entirely, and `if ! jwt=$(...); then`
+relies on this script's `set -o pipefail` (already set at the top of the
+file) to catch a nonzero exit from `mix run` even though `tail` — the
+rightmost command in the pipe — exits 0. This mirrors the existing
+`if ! compose up ...; then ... die ...` pattern already used in
+`multigres-realtime.sh`'s `cmd_up`.
 
 Also update the top-of-function comment area: no changes needed elsewhere.
 
@@ -592,7 +604,9 @@ Also update the top-of-function comment area: no changes needed elsewhere.
 
 Expected: continues past "Realtime is up" to "Minted anon JWT for tenant
 'localhost'", no errors. Check `cat .run/playground_setup.log` — should show
-the `==>` log lines from Task 2 plus the JWT as the last line.
+just the `==>` stderr log lines from Task 2 (registering/updating the tenant,
+running migrations, minting the JWT); the JWT itself is *not* in this file
+(it went to stdout, captured directly into the `jwt` shell variable instead).
 
 **Step 3: Commit**
 
