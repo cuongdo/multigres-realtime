@@ -13,8 +13,9 @@
 # Run from the realtime repo:
 #   cd ~/dev/realtime && mix run ~/dev/integration-scripts/realtime/playground_setup.exs
 #
-# Prints ONLY the minted JWT on the last line of stdout — callers should
-# capture it with `| tail -1`. All other output goes to stderr.
+# Prints two labeled lines on the last two lines of stdout — ANON_JWT=... and
+# SERVICE_JWT=.... Callers should capture with `| tail -2` and parse by prefix.
+# All other output goes to stderr.
 #
 # Override via env: GATEWAY_HOST, GATEWAY_PORT, GATEWAY_USER, GATEWAY_PASSWORD,
 # GATEWAY_DB, PLAYGROUND_TENANT_ID, PLAYGROUND_JWT_SECRET.
@@ -103,8 +104,17 @@ case Migrations.run_migrations(tenant) do
 end
 
 signer = Joken.Signer.create("HS256", secret)
-{:ok, claims} = Joken.generate_claims(%{}, %{role: "anon", exp: System.system_time(:second) + 3600})
-{:ok, jwt, _} = Joken.encode_and_sign(claims, signer)
+exp = System.system_time(:second) + 3600
 
-PlaygroundSetup.log("Minted anon JWT (role=anon, exp=1h)")
-IO.puts(jwt)
+mint = fn role ->
+  {:ok, claims} = Joken.generate_claims(%{}, %{role: role, exp: exp})
+  {:ok, jwt, _} = Joken.encode_and_sign(claims, signer)
+  jwt
+end
+
+anon_jwt = mint.("anon")
+service_jwt = mint.("service_role")
+
+PlaygroundSetup.log("Minted anon + service_role JWTs (exp=1h)")
+IO.puts("ANON_JWT=#{anon_jwt}")
+IO.puts("SERVICE_JWT=#{service_jwt}")
