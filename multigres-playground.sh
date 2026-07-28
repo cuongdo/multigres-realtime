@@ -10,9 +10,9 @@
 # Next.js dev server, wires a tenant + anon JWT between them, and prints the
 # Playground's URL.
 #
-# See docs/plans/2026-07-27-realtime-playground-against-multigres-design.md
-# for the full design and rationale (notably: why there's no reverse proxy,
-# and why the tenant's external_id is "localhost").
+# See ~/dev/multigres-plans/2026-07-28-realtime-playground-test-runner-against-multigres-design.md
+# for the full design and rationale (notably: why Kong fronts GoTrue/PostgREST/
+# Realtime, and why the tenant's external_id is "localhost").
 #
 # Prerequisite (not automated here, same as the existing README): Realtime's
 # metadata DB has been set up at least once —
