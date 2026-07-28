@@ -52,6 +52,24 @@ services:
           # the realtime-v1 route).
           hide_credentials: false
 
+  # Realtime's REST-style API (e.g. POST .../api/broadcast, used by
+  # supabase-js's non-WebSocket broadcast path) — separate from the
+  # WebSocket route above, matching real self-hosted supabase's kong.yml
+  # (services realtime-v1-ws / realtime-v1-rest).
+  - name: realtime-v1-rest
+    url: http://host.docker.internal:4000/api/
+    routes:
+      - name: realtime-v1-rest-all
+        strip_path: true
+        preserve_host: true
+        paths:
+          - /realtime/v1/api
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+
 consumers:
   - username: anon-key
     keyauth_credentials:

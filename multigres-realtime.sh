@@ -13,21 +13,25 @@
 # through to PostgreSQL.
 #
 # Building from a local worktree (the default) compiles the CURRENT checkout, so
-# this runs whatever branch is checked out there (e.g. an unmerged tunnel PR) —
-# not the nightly ghcr.io image.
+# this runs whatever branch is checked out there — not the nightly ghcr.io
+# image. Defaults to a worktree tracking upstream/main (all Realtime-related
+# fixes are merged there); set MULTIGRES_DIR to test a different branch.
 #
-# By default the cluster builds on stock Debian `postgres`. Set
-# MULTIGRES_POSTGRES_IMAGE (+ MULTIGRES_PROVISION_PG_PACKAGES=false) to build on
-# the Supabase-flavored base instead (see multigres PR #1203 / docker/README.md
-# "Custom base image"), e.g.:
+# By default the cluster builds on the Supabase-flavored base image (see
+# multigres PR #1203 / docker/README.md "Custom base image") rather than stock
+# Debian `postgres` — it already bundles wal2json, the auth.*/realtime/storage
+# schemas, the anon/authenticated/service_role/supabase_* roles, and default
+# privilege grants, avoiding a pile of Supabase-DB provisioning workarounds
+# this script would otherwise need. Set MULTIGRES_POSTGRES_IMAGE="" (+
+# MULTIGRES_PROVISION_PG_PACKAGES="") to build on stock Debian postgres
+# instead, e.g. to isolate whether a failure is Multigres-specific vs.
+# Supabase-image-specific:
 #
-#   MULTIGRES_POSTGRES_IMAGE=supabase/postgres:17.6.1.150-multigres \
-#   MULTIGRES_PROVISION_PG_PACKAGES=false \
-#   ./multigres-realtime.sh up
+#   MULTIGRES_POSTGRES_IMAGE="" MULTIGRES_PROVISION_PG_PACKAGES="" ./multigres-realtime.sh up
 #
 # The connecting superuser (PGUSER) is auto-detected from the running
-# container's POSTGRES_USER (postgres for stock, supabase_admin for the
-# Supabase base) — override explicitly by exporting PGUSER yourself.
+# container's POSTGRES_USER (supabase_admin for the Supabase base, postgres
+# for stock) — override explicitly by exporting PGUSER yourself.
 #
 #   ./multigres-realtime.sh up      # build + start the cluster, prep roles, print info
 #   ./multigres-realtime.sh info    # print connection details + how to test
@@ -44,9 +48,11 @@ set -euo pipefail
 # Configuration (override via environment)
 # ----------------------------------------------------------------------------
 
-# Multigres checkout to build the cluster image from. Defaults to the tunnel
-# worktree. Point this at any multigres checkout to test that branch.
-MULTIGRES_DIR="${MULTIGRES_DIR:-/Users/cdo/dev/multigres/.worktrees/realtime-broadcast-tunnel}"
+# Multigres checkout to build the cluster image from. Defaults to a worktree
+# tracking upstream/main (all Realtime-related fixes are merged there — no
+# need to build from an unmerged branch anymore). Point this at any multigres
+# checkout to test a different branch.
+MULTIGRES_DIR="${MULTIGRES_DIR:-/Users/cdo/dev/multigres/.worktrees/upstream-main}"
 
 # Host port the gateway's PostgreSQL endpoint is published on. This must match
 # the published port in the multigres docker-compose.yml (15432 by default);
@@ -69,12 +75,15 @@ GATEWAY_PG_PORT="${GATEWAY_PG_PORT:-15432}"
 MULTIGRES_PG_MAX_CONNECTIONS="${MULTIGRES_PG_MAX_CONNECTIONS:-100}"
 
 # Base image to build the cluster on + whether to skip apt provisioning of
-# pgBackRest/pgvector/procps (required for a non-Debian base, e.g. the
-# Supabase image below, which is Alpine/Nix-based). Empty = compose file's own
-# default (stock Debian `postgres:17.7`, PROVISION_PG_PACKAGES=true). See
-# docker/README.md "Custom base image" in the multigres repo.
-MULTIGRES_POSTGRES_IMAGE="${MULTIGRES_POSTGRES_IMAGE:-}"
-MULTIGRES_PROVISION_PG_PACKAGES="${MULTIGRES_PROVISION_PG_PACKAGES:-}"
+# pgBackRest/pgvector/procps (the Supabase image below already bundles them,
+# plus wal2json, the auth.*/realtime/storage/graphql schemas, the anon/
+# authenticated/service_role/supabase_* roles, and default privilege grants —
+# all the Supabase-DB provisioning gaps stock Debian postgres lacks). See
+# docker/README.md "Custom base image" in the multigres repo (PR #1203).
+# Override to "" (+ MULTIGRES_PROVISION_PG_PACKAGES="") to build on stock
+# Debian `postgres:17.7` instead.
+MULTIGRES_POSTGRES_IMAGE="${MULTIGRES_POSTGRES_IMAGE-supabase/postgres:17.6.1.150-multigres}"
+MULTIGRES_PROVISION_PG_PACKAGES="${MULTIGRES_PROVISION_PG_PACKAGES-false}"
 
 # Gateway credentials. The superuser follows the base image's POSTGRES_USER
 # (`postgres` for stock Debian postgres, `supabase_admin` for the Supabase
@@ -443,14 +452,16 @@ Usage: $0 <command>
 
 Environment:
   MULTIGRES_DIR                    multigres checkout to build from
-                                   (default: tunnel worktree)
+                                   (default: worktree tracking upstream/main)
   GATEWAY_PG_PORT                  published gateway PG port (default: 15432)
   MULTIGRES_PG_MAX_CONNECTIONS     PG max_connections (default: 100)
-  MULTIGRES_POSTGRES_IMAGE         base image for the cluster (default: stock
-                                   postgres:17.7; e.g.
-                                   supabase/postgres:17.6.1.150-multigres)
+  MULTIGRES_POSTGRES_IMAGE         base image for the cluster (default:
+                                   supabase/postgres:17.6.1.150-multigres;
+                                   set "" for stock postgres:17.7)
   MULTIGRES_PROVISION_PG_PACKAGES  set 'false' with a non-Debian base image
                                    that already bundles pgbackrest/pgvector
+                                   (default: false, matching the Supabase
+                                   base image default above)
   PGUSER                           override the auto-detected superuser
                                    (default: auto-detected from the running
                                    container's POSTGRES_USER)

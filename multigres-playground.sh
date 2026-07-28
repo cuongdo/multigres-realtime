@@ -46,7 +46,13 @@ PLAYGROUND_JWT_SECRET="${PLAYGROUND_JWT_SECRET:-multigres-playground-jwt-secret-
 
 GATEWAY_HOST="${GATEWAY_HOST:-127.0.0.1}"
 GATEWAY_PORT="${GATEWAY_PORT:-15432}"
-GATEWAY_USER="${GATEWAY_USER:-postgres}"
+# The connecting superuser follows the cluster's base image, same as
+# multigres-realtime.sh's own resolve_pguser() (postgres for stock Debian
+# postgres, supabase_admin for the Supabase base, which multigres-realtime.sh
+# now defaults to) — auto-detected in resolve_gateway_user() once the cluster
+# container exists, unless explicitly overridden here.
+GATEWAY_USER_OVERRIDE="${GATEWAY_USER:-}"
+GATEWAY_USER=""
 GATEWAY_PASSWORD="${GATEWAY_PASSWORD:-postgres}"
 GATEWAY_DB="${GATEWAY_DB:-postgres}"
 
@@ -146,6 +152,21 @@ kill_pidfile() {
 # Commands
 # ----------------------------------------------------------------------------
 
+# Auto-detect the gateway's connecting superuser from the running cluster
+# container (postgres for stock Debian postgres, supabase_admin for the
+# Supabase base — matches multigres-realtime.sh's resolve_pguser()), unless
+# GATEWAY_USER was explicitly set. Must run after the cluster container
+# exists, so this is called from cmd_up rather than at config-load time.
+resolve_gateway_user() {
+  if [ -n "$GATEWAY_USER_OVERRIDE" ]; then
+    GATEWAY_USER="$GATEWAY_USER_OVERRIDE"
+    return
+  fi
+  local detected
+  detected="$(docker exec multigres_realtime-multigres-1 sh -c 'echo "${POSTGRES_USER:-postgres}"' 2>/dev/null | tr -d '\r\n')"
+  GATEWAY_USER="${detected:-postgres}"
+}
+
 # Create the extra Postgres roles GoTrue and PostgREST need to connect as.
 # multigres-realtime.sh already creates anon/authenticated/service_role/etc. for
 # Realtime's own compat surface; these two are specific to adding GoTrue+PostgREST.
@@ -163,6 +184,11 @@ BEGIN
   END IF;
 END
 \$\$;
+-- Both roles already exist in the Supabase base image (with some other/no
+-- password) — the guard above only creates them when missing (stock
+-- postgres), so fix the password unconditionally either way.
+ALTER ROLE authenticator PASSWORD '${GATEWAY_PASSWORD}';
+ALTER ROLE supabase_auth_admin PASSWORD '${GATEWAY_PASSWORD}';
 GRANT anon, authenticated, service_role TO authenticator;
 GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
 ALTER SCHEMA auth OWNER TO supabase_auth_admin;
@@ -353,6 +379,8 @@ cmd_up() {
 
   log "Bringing up the Multigres cluster"
   "$SCRIPT_DIR/multigres-realtime.sh" up
+  resolve_gateway_user
+  log "  connecting as gateway superuser: $GATEWAY_USER"
   prepare_gateway_roles
 
   log "Ensuring Realtime's metadata DB is running"
