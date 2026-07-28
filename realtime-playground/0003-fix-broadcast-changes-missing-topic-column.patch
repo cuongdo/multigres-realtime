@@ -1,0 +1,44 @@
+diff --git a/packages/tests/src/test_suites/broadcast-changes.ts b/packages/tests/src/test_suites/broadcast-changes.ts
+index 52285c0..aa20a73 100644
+--- a/packages/tests/src/test_suites/broadcast-changes.ts
++++ b/packages/tests/src/test_suites/broadcast-changes.ts
+@@ -22,7 +22,7 @@ export default {
+           .subscribe()
+ 
+         await waitForChannel(channel)
+-        await supabase.from('broadcast_changes').insert({ value, id })
++        await supabase.from('broadcast_changes').insert({ value, id, topic: 'topic:test' })
+         await waitFor(() => result)
+ 
+         assert.strictEqual(result.payload.record.id, id)
+@@ -41,7 +41,7 @@ export default {
+         const id = randomId()
+         const originalValue = randomId()
+         const updatedValue = randomId()
+-        await supabase.from('broadcast_changes').insert({ value: originalValue, id })
++        await supabase.from('broadcast_changes').insert({ value: originalValue, id, topic: 'topic:test' })
+ 
+         // biome-ignore lint/suspicious/noExplicitAny: broadcast payload shape varies by event
+         let result: any = null
+@@ -71,7 +71,7 @@ export default {
+ 
+         const id = randomId()
+         const value = randomId()
+-        await supabase.from('broadcast_changes').insert({ value, id })
++        await supabase.from('broadcast_changes').insert({ value, id, topic: 'topic:test' })
+ 
+         // biome-ignore lint/suspicious/noExplicitAny: broadcast payload shape varies by event
+         let result: any = null
+diff --git a/packages/tests/src/test_suites/load-broadcast-from-db.ts b/packages/tests/src/test_suites/load-broadcast-from-db.ts
+index d5d703e..d8cd27f 100644
+--- a/packages/tests/src/test_suites/load-broadcast-from-db.ts
++++ b/packages/tests/src/test_suites/load-broadcast-from-db.ts
+@@ -25,7 +25,7 @@ export default {
+           Array.from({ length: LOAD_MESSAGES }, async () => {
+             const id = randomId()
+             sendTimes.set(id, now())
+-            await supabase.from('broadcast_changes').insert({ id, value: randomId() })
++            await supabase.from('broadcast_changes').insert({ id, value: randomId(), topic: 'topic:test' })
+           }),
+         )
+ 

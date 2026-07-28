@@ -70,6 +70,7 @@ WAIT_TIMEOUT="${WAIT_TIMEOUT:-60}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR="${SCRIPT_DIR}/.run"
 PATCH_FILE="${SCRIPT_DIR}/realtime-playground/0002-fix-broadcast-send-schema-nonoptional.patch"
+PATCH_FILE_3="${SCRIPT_DIR}/realtime-playground/0003-fix-broadcast-changes-missing-topic-column.patch"
 SETUP_SCRIPT="${SCRIPT_DIR}/realtime/playground_setup.exs"
 
 # ----------------------------------------------------------------------------
@@ -371,6 +372,12 @@ ensure_playground_clone() {
   if grep -qF "default('message').nonoptional()" "$schemas"; then
     log "Applying patch: fix broadcastSendSchema's .nonoptional()-after-.default() crash"
     (cd "$PLAYGROUND_DIR" && git apply "$PATCH_FILE")
+  fi
+
+  local broadcast_changes_test="$PLAYGROUND_DIR/packages/tests/src/test_suites/broadcast-changes.ts"
+  if [ -f "$broadcast_changes_test" ] && grep -qF "insert({ value, id })" "$broadcast_changes_test"; then
+    log "Applying patch: add missing topic column to broadcast_changes test inserts"
+    (cd "$PLAYGROUND_DIR" && git apply "$PATCH_FILE_3")
   fi
 }
 
