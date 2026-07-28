@@ -56,6 +56,9 @@ GOTRUE_IMAGE="${GOTRUE_IMAGE:-supabase/gotrue:v2.186.0}"
 POSTGREST_IMAGE="${POSTGREST_IMAGE:-postgrest/postgrest:v14.8}"
 KONG_IMAGE="${KONG_IMAGE:-kong:3.9.1}"
 
+PLAYGROUND_TEST_USER_EMAIL="${PLAYGROUND_TEST_USER_EMAIL:-playground@localhost}"
+PLAYGROUND_TEST_USER_PASSWORD="${PLAYGROUND_TEST_USER_PASSWORD:-multigres-playground-password}"
+
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-60}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -234,6 +237,49 @@ start_kong() {
 
   wait_for_healthy playground-kong
   log "Kong is up"
+}
+
+# Create/update the fixture schema Test Runner's auth-gated suites need
+# (tables, RLS, triggers, publication entries) by running realtime-check.ts
+# *in place* from the Realtime checkout — it already contains this logic
+# (see docs/plans/2026-07-28-...-design.md, "Fixture setup"), so there's
+# nothing to copy here. Picks the cheapest DB-required category
+# ("authorization") purely to trigger its setup() step; the one test it runs
+# is a bonus compatibility check.
+run_fixture_setup() {
+  local anon_jwt="$1" service_jwt="$2"
+  command -v bun >/dev/null 2>&1 || die "bun not found on PATH (needed for realtime-check.ts — see https://bun.sh)"
+
+  log "Running realtime-check.ts fixture setup against the gateway"
+  if ! bun run "$REALTIME_DIR/test/e2e/realtime-check.ts" \
+    --env local --url "http://localhost:${KONG_PORT}" \
+    --db-url "postgresql://postgres:${GATEWAY_PASSWORD}@${GATEWAY_HOST}:${GATEWAY_PORT}/${GATEWAY_DB}" \
+    --publishable-key "$anon_jwt" --secret-key "$service_jwt" \
+    --test authorization > "$RUN_DIR/fixture_setup.log" 2>&1; then
+    warn "fixture setup reported a failure — see $RUN_DIR/fixture_setup.log"
+    warn "(the fixture schema may still have been created; check before re-running)"
+  fi
+}
+
+# Create a persistent test user via GoTrue's admin API — separate from
+# realtime-check.ts's own ephemeral user (which it deletes after its run) —
+# so the Playground's .env can reference a stable email/password for a real
+# browser session.
+create_test_user() {
+  local service_jwt="$1"
+  log "Ensuring persistent test user ($PLAYGROUND_TEST_USER_EMAIL)"
+  local http_status
+  http_status="$(curl -s -o "$RUN_DIR/create_test_user.log" -w '%{http_code}' \
+    -X POST "http://localhost:${KONG_PORT}/auth/v1/admin/users" \
+    -H "apikey: ${service_jwt}" -H "Authorization: Bearer ${service_jwt}" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"${PLAYGROUND_TEST_USER_EMAIL}\",\"password\":\"${PLAYGROUND_TEST_USER_PASSWORD}\",\"email_confirm\":true}")"
+
+  case "$http_status" in
+    200|201) log "  created" ;;
+    422)     log "  already exists" ;;
+    *) die "could not create test user (HTTP $http_status) — see $RUN_DIR/create_test_user.log" ;;
+  esac
 }
 
 # Clone the Playground repo and apply the local crash-fix patch — each step
