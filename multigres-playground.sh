@@ -87,12 +87,34 @@ kill_pidfile() {
     pid="$(cat "$pidfile")"
     if kill -0 "$pid" 2>/dev/null; then
       log "Stopping $label (pid $pid)"
-      kill "$pid" 2>/dev/null || true
+      # Signal $pid and its whole descendant tree, not just $pid itself.
+      # pnpm/Next.js fan out into a multi-process tree rather than
+      # exec-replacing themselves, so `kill -9 $pid` alone would only hit
+      # the top-level process and orphan the rest (notably next-server,
+      # which keeps holding its port). Note: this can't be done by
+      # signalling $pid's process group (kill -- "-$pid") because bash
+      # scripts run without job control (monitor mode) by default, so a
+      # backgrounded job's pgid is inherited from the ambient group rather
+      # than being its own pid — verified empirically against this script's
+      # actual `pnpm web` process tree.
+      local pids=("$pid") i=0 kids k
+      while [ "$i" -lt "${#pids[@]}" ]; do
+        kids="$(pgrep -P "${pids[$i]}" 2>/dev/null || true)"
+        for k in $kids; do pids+=("$k"); done
+        i=$((i + 1))
+      done
+      kill "${pids[@]}" 2>/dev/null || true
       for _ in 1 2 3 4 5; do
         kill -0 "$pid" 2>/dev/null || break
         sleep 1
       done
-      kill -9 "$pid" 2>/dev/null || true
+      pids=("$pid"); i=0
+      while [ "$i" -lt "${#pids[@]}" ]; do
+        kids="$(pgrep -P "${pids[$i]}" 2>/dev/null || true)"
+        for k in $kids; do pids+=("$k"); done
+        i=$((i + 1))
+      done
+      kill -9 "${pids[@]}" 2>/dev/null || true
     fi
     rm -f "$pidfile"
   fi
