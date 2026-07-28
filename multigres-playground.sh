@@ -33,8 +33,6 @@ REALTIME_DIR="${REALTIME_DIR:-$HOME/dev/realtime}"
 
 PLAYGROUND_DIR="${PLAYGROUND_DIR:-$HOME/dev/realtime-playground}"
 PLAYGROUND_REPO_URL="${PLAYGROUND_REPO_URL:-https://github.com/supabase-community/realtime-playground.git}"
-PLAYGROUND_WORKTREE_BRANCH="multigres-realtime-url"
-PLAYGROUND_WORKTREE_DIR="${PLAYGROUND_DIR}/.worktrees/${PLAYGROUND_WORKTREE_BRANCH}"
 
 REALTIME_PORT="${REALTIME_PORT:-4000}"
 PLAYGROUND_PORT="${PLAYGROUND_PORT:-3000}"
@@ -56,8 +54,7 @@ WAIT_TIMEOUT="${WAIT_TIMEOUT:-60}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR="${SCRIPT_DIR}/.run"
-PATCH_FILE="${SCRIPT_DIR}/realtime-playground/0001-use-public-realtime-url.patch"
-PATCH_FILE_2="${SCRIPT_DIR}/realtime-playground/0002-fix-broadcast-send-schema-nonoptional.patch"
+PATCH_FILE="${SCRIPT_DIR}/realtime-playground/0002-fix-broadcast-send-schema-nonoptional.patch"
 SETUP_SCRIPT="${SCRIPT_DIR}/realtime/playground_setup.exs"
 
 # ----------------------------------------------------------------------------
@@ -148,9 +145,11 @@ ALTER SCHEMA auth OWNER TO supabase_auth_admin;
 SQL
 }
 
-# Clone the Playground repo, create its worktree, and apply the
-# PUBLIC_REALTIME_URL patch — each step skipped if already done.
-ensure_playground_worktree() {
+# Clone the Playground repo and apply the local crash-fix patch — each step
+# skipped if already done. No worktree: Kong (added in this plan) makes the
+# old URL patch unnecessary, leaving only this one small local fix, which
+# doesn't need a separate branch.
+ensure_playground_clone() {
   command -v pnpm >/dev/null 2>&1 || die "pnpm not found on PATH (needed to run the Playground)"
 
   if [ ! -d "$PLAYGROUND_DIR" ]; then
@@ -158,21 +157,10 @@ ensure_playground_worktree() {
     git clone "$PLAYGROUND_REPO_URL" "$PLAYGROUND_DIR"
   fi
 
-  if [ ! -d "$PLAYGROUND_WORKTREE_DIR" ]; then
-    log "Creating worktree $PLAYGROUND_WORKTREE_DIR"
-    (cd "$PLAYGROUND_DIR" && git worktree add ".worktrees/${PLAYGROUND_WORKTREE_BRANCH}" -b "$PLAYGROUND_WORKTREE_BRANCH")
-  fi
-
-  local target="$PLAYGROUND_WORKTREE_DIR/apps/next/src/app/playground/_components/forms/RealtimeClientForm.tsx"
-  if ! grep -q "PUBLIC_REALTIME_URL" "$target"; then
-    log "Applying patch: prefer PUBLIC_REALTIME_URL in RealtimeClientForm.tsx"
-    (cd "$PLAYGROUND_WORKTREE_DIR" && git apply "$PATCH_FILE")
-  fi
-
-  local schemas="$PLAYGROUND_WORKTREE_DIR/packages/realtime-core/src/schemas/index.ts"
+  local schemas="$PLAYGROUND_DIR/packages/realtime-core/src/schemas/index.ts"
   if grep -qF "default('message').nonoptional()" "$schemas"; then
     log "Applying patch: fix broadcastSendSchema's .nonoptional()-after-.default() crash"
-    (cd "$PLAYGROUND_WORKTREE_DIR" && git apply "$PATCH_FILE_2")
+    (cd "$PLAYGROUND_DIR" && git apply "$PATCH_FILE")
   fi
 }
 
@@ -218,25 +206,25 @@ cmd_up() {
   [ -n "$jwt" ] || die "playground_setup.exs did not print a JWT — see $RUN_DIR/playground_setup.log"
   log "Minted anon JWT for tenant '${PLAYGROUND_TENANT_ID}'"
 
-  ensure_playground_worktree
+  ensure_playground_clone
 
-  log "Writing $PLAYGROUND_WORKTREE_DIR/.env"
-  cat > "$PLAYGROUND_WORKTREE_DIR/.env" <<ENV
+  log "Writing $PLAYGROUND_DIR/.env"
+  cat > "$PLAYGROUND_DIR/.env" <<ENV
 PUBLIC_REALTIME_URL=ws://localhost:${REALTIME_PORT}/socket
 PUBLIC_SUPABASE_KEY=${jwt}
 PUBLIC_SUPABASE_URL=http://localhost:${REALTIME_PORT}
 ENABLE_PLAYGROUND=true
 ENV
 
-  if [ ! -d "$PLAYGROUND_WORKTREE_DIR/node_modules" ]; then
+  if [ ! -d "$PLAYGROUND_DIR/node_modules" ]; then
     log "Installing playground dependencies (pnpm install)"
-    (cd "$PLAYGROUND_WORKTREE_DIR" && pnpm install)
+    (cd "$PLAYGROUND_DIR" && pnpm install)
   fi
 
   log "Starting the Playground (pnpm web) on :$PLAYGROUND_PORT"
   kill_pidfile "$RUN_DIR/playground.pid" "Playground"
   (
-    cd "$PLAYGROUND_WORKTREE_DIR"
+    cd "$PLAYGROUND_DIR"
     PORT="$PLAYGROUND_PORT" nohup pnpm web > "$RUN_DIR/playground.log" 2>&1 &
     echo $! > "$RUN_DIR/playground.pid"
   )
