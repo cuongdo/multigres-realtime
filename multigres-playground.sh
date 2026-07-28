@@ -297,6 +297,15 @@ run_fixture_setup() {
     warn "fixture setup reported a failure — see $RUN_DIR/fixture_setup.log"
     warn "(the fixture schema may still have been created; check before re-running)"
   fi
+
+  # PostgREST caches the schema at startup/last-reload and won't know about
+  # the fixture tables just created above until told to refresh (it's
+  # already LISTENing on "pgrst" — see PGRST_DB_URI in start_auth_stack —
+  # since db-channel-enabled defaults on). Without this, REST calls against
+  # fixture tables fail with "Could not find the table ... in the schema
+  # cache" even though the tables exist.
+  PGPASSWORD="$GATEWAY_PASSWORD" psql -v ON_ERROR_STOP=1 -h "$GATEWAY_HOST" -p "$GATEWAY_PORT" \
+    -U "$GATEWAY_USER" -d "$GATEWAY_DB" -c "NOTIFY pgrst, 'reload schema';" >/dev/null
 }
 
 # Create a persistent test user via GoTrue's admin API — separate from

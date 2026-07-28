@@ -346,6 +346,23 @@ SQL
     fi
   fi
 
+  # 8) Ensure the "supabase_realtime" publication exists. Realtime's legacy
+  #    Postgres Changes (postgres_cdc_rls) subscription path only ever ALTERs
+  #    this publication (add/remove tables per subscription, in
+  #    Subscriptions.create's query) — it never CREATEs it, unlike the newer
+  #    Broadcast-from-DB path, which self-creates its own
+  #    supabase_realtime_messages_publication on first connect (see the log
+  #    line below). In the real stack it's provisioned by supabase/postgres's
+  #    own init scripts; our stock-postgres image lacks it. Without it, every
+  #    Postgres Changes subscription's INSERT INTO realtime.subscription
+  #    silently matches 0 rows (its CTE joins against pg_publication_tables
+  #    for this publication name) and the channel never gets its "Subscribed
+  #    to PostgreSQL" system message — the client just times out waiting.
+  log "  ensuring 'supabase_realtime' publication exists (for Postgres Changes)"
+  if [ "$(gw_psql -tAc "select 1 from pg_publication where pubname = 'supabase_realtime'")" != "1" ]; then
+    gw_psql -v ON_ERROR_STOP=1 -c "CREATE PUBLICATION supabase_realtime;"
+  fi
+
   log "Prep complete. Realtime will create the realtime objects, publication,"
   log "and replication slot itself on first connect (this exercises the tunnel)."
 }
