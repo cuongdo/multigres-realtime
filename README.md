@@ -87,6 +87,32 @@ test's tenant fixture (`test/support/generators.ex`) at `127.0.0.1:15432` with
 user/password `postgres`/`postgres` and `ssl_enforced: false`. The smoke script
 above is the lower-friction path and covers the same tunnel behavior.
 
+## Step 3 — run the Realtime Playground (and its Test Runner) against it
+
+```bash
+./multigres-playground.sh up
+```
+
+Brings up a persistent `mix phx.server` Realtime plus GoTrue, PostgREST, and
+Kong (Docker containers), clones/starts the
+[Playground](https://github.com/supabase-community/realtime-playground) app,
+and wires a tenant + fresh JWTs between all of it. Kong (`localhost:8000`) is
+the single origin the Playground's `supabase-js` client talks to for
+`/auth/v1`, `/rest/v1`, and `/realtime/v1`.
+
+- **Playground** — `http://localhost:3000/playground` — manual interactive
+  Broadcast/Presence/Postgres Changes exploration.
+- **Test Runner** — `http://localhost:3000/test` — the Playground's
+  automated suite (all 12), running against Multigres end-to-end.
+
+Requires `bun` on PATH (`brew install oven-sh/bun/bun`), used to run
+Realtime's `test/e2e/realtime-check.ts` in place to set up the fixture schema
+the Test Runner's auth-gated suites need.
+
+Other commands: `./multigres-playground.sh info`,
+`./multigres-playground.sh logs [realtime|playground]`,
+`./multigres-playground.sh down [--with-cluster]`.
+
 ## Also validate the tunnel without Realtime
 
 The Multigres repo ships a Go test that drives the raw replication wire sequence
