@@ -57,6 +57,7 @@ WAIT_TIMEOUT="${WAIT_TIMEOUT:-60}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR="${SCRIPT_DIR}/.run"
 PATCH_FILE="${SCRIPT_DIR}/realtime-playground/0001-use-public-realtime-url.patch"
+PATCH_FILE_2="${SCRIPT_DIR}/realtime-playground/0002-fix-broadcast-send-schema-nonoptional.patch"
 SETUP_SCRIPT="${SCRIPT_DIR}/realtime/playground_setup.exs"
 
 # ----------------------------------------------------------------------------
@@ -143,6 +144,12 @@ ensure_playground_worktree() {
   if ! grep -q "PUBLIC_REALTIME_URL" "$target"; then
     log "Applying patch: prefer PUBLIC_REALTIME_URL in RealtimeClientForm.tsx"
     (cd "$PLAYGROUND_WORKTREE_DIR" && git apply "$PATCH_FILE")
+  fi
+
+  local schemas="$PLAYGROUND_WORKTREE_DIR/packages/realtime-core/src/schemas/index.ts"
+  if grep -qF "default('message').nonoptional()" "$schemas"; then
+    log "Applying patch: fix broadcastSendSchema's .nonoptional()-after-.default() crash"
+    (cd "$PLAYGROUND_WORKTREE_DIR" && git apply "$PATCH_FILE_2")
   fi
 }
 

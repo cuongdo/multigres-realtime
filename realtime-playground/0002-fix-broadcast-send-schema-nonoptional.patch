@@ -1,0 +1,13 @@
+diff --git a/packages/realtime-core/src/schemas/index.ts b/packages/realtime-core/src/schemas/index.ts
+index 9a7edd7..791a520 100644
+--- a/packages/realtime-core/src/schemas/index.ts
++++ b/packages/realtime-core/src/schemas/index.ts
+@@ -205,7 +205,7 @@ export function buildPostgresFilter(
+ // ---------------------------------------------------------------------------
+ 
+ export const broadcastSendSchema = z.object({
+-  event: z.string().min(1, 'Event name is required').default('message').nonoptional(),
++  event: z.string().min(1, 'Event name is required').default('message'),
+   message: z.string().optional(),
+ })
+ 
