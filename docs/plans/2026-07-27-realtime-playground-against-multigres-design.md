@@ -1,7 +1,9 @@
 # Running the Realtime Playground against Multigres
 
 **Date:** 2026-07-27
-**Status:** Design — not yet implemented
+**Status:** Superseded by
+`docs/plans/2026-07-28-realtime-playground-test-runner-against-multigres-design.md`
+(which folds this design in and additionally covers the Playground's Test Runner mode)
 
 ## Context
 
