@@ -102,6 +102,28 @@ kill_pidfile() {
 # Commands
 # ----------------------------------------------------------------------------
 
+# Clone the Playground repo, create its worktree, and apply the
+# PUBLIC_REALTIME_URL patch — each step skipped if already done.
+ensure_playground_worktree() {
+  command -v pnpm >/dev/null 2>&1 || die "pnpm not found on PATH (needed to run the Playground)"
+
+  if [ ! -d "$PLAYGROUND_DIR" ]; then
+    log "Cloning $PLAYGROUND_REPO_URL into $PLAYGROUND_DIR"
+    git clone "$PLAYGROUND_REPO_URL" "$PLAYGROUND_DIR"
+  fi
+
+  if [ ! -d "$PLAYGROUND_WORKTREE_DIR" ]; then
+    log "Creating worktree $PLAYGROUND_WORKTREE_DIR"
+    (cd "$PLAYGROUND_DIR" && git worktree add ".worktrees/${PLAYGROUND_WORKTREE_BRANCH}" -b "$PLAYGROUND_WORKTREE_BRANCH")
+  fi
+
+  local target="$PLAYGROUND_WORKTREE_DIR/apps/next/src/app/playground/_components/forms/RealtimeClientForm.tsx"
+  if ! grep -q "PUBLIC_REALTIME_URL" "$target"; then
+    log "Applying patch: prefer PUBLIC_REALTIME_URL in RealtimeClientForm.tsx"
+    (cd "$PLAYGROUND_WORKTREE_DIR" && git apply "$PATCH_FILE")
+  fi
+}
+
 cmd_up() {
   mkdir -p "$RUN_DIR"
 
@@ -142,6 +164,34 @@ cmd_up() {
 
   [ -n "$jwt" ] || die "playground_setup.exs did not print a JWT — see $RUN_DIR/playground_setup.log"
   log "Minted anon JWT for tenant '${PLAYGROUND_TENANT_ID}'"
+
+  ensure_playground_worktree
+
+  log "Writing $PLAYGROUND_WORKTREE_DIR/.env"
+  cat > "$PLAYGROUND_WORKTREE_DIR/.env" <<ENV
+PUBLIC_REALTIME_URL=http://localhost:${REALTIME_PORT}/socket
+PUBLIC_SUPABASE_KEY=${jwt}
+PUBLIC_SUPABASE_URL=http://localhost:${REALTIME_PORT}
+ENABLE_PLAYGROUND=true
+ENV
+
+  if [ ! -d "$PLAYGROUND_WORKTREE_DIR/node_modules" ]; then
+    log "Installing playground dependencies (pnpm install)"
+    (cd "$PLAYGROUND_WORKTREE_DIR" && pnpm install)
+  fi
+
+  log "Starting the Playground (pnpm web) on :$PLAYGROUND_PORT"
+  kill_pidfile "$RUN_DIR/playground.pid" "Playground"
+  (
+    cd "$PLAYGROUND_WORKTREE_DIR"
+    PORT="$PLAYGROUND_PORT" nohup pnpm web > "$RUN_DIR/playground.log" 2>&1 &
+    echo $! > "$RUN_DIR/playground.pid"
+  )
+
+  wait_for_http "http://localhost:${PLAYGROUND_PORT}" "Playground"
+
+  echo
+  cmd_info
 }
 
 cmd_down() {
