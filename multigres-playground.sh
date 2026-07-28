@@ -42,7 +42,7 @@ PLAYGROUND_PORT="${PLAYGROUND_PORT:-3000}"
 # localhost (just different ports), so the Host header's hostname is always
 # "localhost" — no subdomain tricks needed.
 PLAYGROUND_TENANT_ID="${PLAYGROUND_TENANT_ID:-localhost}"
-PLAYGROUND_JWT_SECRET="${PLAYGROUND_JWT_SECRET:-multigres-playground-secret}"
+PLAYGROUND_JWT_SECRET="${PLAYGROUND_JWT_SECRET:-multigres-playground-jwt-secret-key}"
 
 GATEWAY_HOST="${GATEWAY_HOST:-127.0.0.1}"
 GATEWAY_PORT="${GATEWAY_PORT:-15432}"
@@ -166,6 +166,15 @@ END
 GRANT anon, authenticated, service_role TO authenticator;
 GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
 ALTER SCHEMA auth OWNER TO supabase_auth_admin;
+ALTER ROLE supabase_auth_admin SET search_path TO auth, public;
+-- GoTrue's migrations CREATE OR REPLACE these (already created by
+-- multigres-realtime.sh, owned by postgres) and its own schema_migrations
+-- tracking table (created in "public" regardless of search_path).
+GRANT CREATE, USAGE ON SCHEMA public TO supabase_auth_admin;
+ALTER FUNCTION auth.uid() OWNER TO supabase_auth_admin;
+ALTER FUNCTION auth.role() OWNER TO supabase_auth_admin;
+ALTER FUNCTION auth.email() OWNER TO supabase_auth_admin;
+ALTER FUNCTION auth.jwt() OWNER TO supabase_auth_admin;
 SQL
 }
 
@@ -180,7 +189,7 @@ start_auth_stack() {
   log "Starting GoTrue"
   docker rm -f playground-gotrue >/dev/null 2>&1 || true
   docker run -d --name playground-gotrue \
-    --network "$PLAYGROUND_NETWORK" \
+    --network "$PLAYGROUND_NETWORK" --network-alias gotrue \
     --add-host host.docker.internal:host-gateway \
     --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:9999/health || exit 1" \
     --health-interval=5s --health-timeout=5s --health-retries=5 \
@@ -202,7 +211,7 @@ start_auth_stack() {
   log "Starting PostgREST"
   docker rm -f playground-postgrest >/dev/null 2>&1 || true
   docker run -d --name playground-postgrest \
-    --network "$PLAYGROUND_NETWORK" \
+    --network "$PLAYGROUND_NETWORK" --network-alias postgrest \
     --add-host host.docker.internal:host-gateway \
     -e PGRST_DB_URI="postgres://authenticator:${GATEWAY_PASSWORD}@host.docker.internal:${GATEWAY_PORT}/${GATEWAY_DB}" \
     -e PGRST_DB_SCHEMAS=public \
@@ -329,27 +338,35 @@ cmd_up() {
   wait_for_http "http://localhost:${REALTIME_PORT}/status" "Realtime"
   log "Realtime is up (logs: $RUN_DIR/realtime.log)"
 
-  log "Registering/updating the Multigres tenant and minting an anon JWT"
-  local jwt
-  if ! jwt="$(cd "$REALTIME_DIR" && \
+  start_auth_stack
+
+  log "Registering/updating the Multigres tenant and minting JWTs"
+  local setup_output anon_jwt service_jwt
+  if ! setup_output="$(cd "$REALTIME_DIR" && \
     GATEWAY_HOST="$GATEWAY_HOST" GATEWAY_PORT="$GATEWAY_PORT" \
     GATEWAY_USER="$GATEWAY_USER" GATEWAY_PASSWORD="$GATEWAY_PASSWORD" GATEWAY_DB="$GATEWAY_DB" \
     PLAYGROUND_TENANT_ID="$PLAYGROUND_TENANT_ID" PLAYGROUND_JWT_SECRET="$PLAYGROUND_JWT_SECRET" \
     GEN_RPC_TCP_SERVER_PORT=0 GEN_RPC_TCP_CLIENT_PORT=0 \
-    mix run "$SETUP_SCRIPT" 2>"$RUN_DIR/playground_setup.log" | tail -1)"; then
+    mix run "$SETUP_SCRIPT" 2>"$RUN_DIR/playground_setup.log" | tail -2)"; then
     die "playground_setup.exs failed — see $RUN_DIR/playground_setup.log"
   fi
+  anon_jwt="$(printf '%s\n' "$setup_output" | grep '^ANON_JWT=' | cut -d= -f2-)"
+  service_jwt="$(printf '%s\n' "$setup_output" | grep '^SERVICE_JWT=' | cut -d= -f2-)"
+  [ -n "$anon_jwt" ] && [ -n "$service_jwt" ] || die "playground_setup.exs did not print both JWTs — see $RUN_DIR/playground_setup.log"
+  log "Minted anon + service_role JWTs for tenant '${PLAYGROUND_TENANT_ID}'"
 
-  [ -n "$jwt" ] || die "playground_setup.exs did not print a JWT — see $RUN_DIR/playground_setup.log"
-  log "Minted anon JWT for tenant '${PLAYGROUND_TENANT_ID}'"
+  start_kong "$anon_jwt" "$service_jwt"
+  run_fixture_setup "$anon_jwt" "$service_jwt"
+  create_test_user "$service_jwt"
 
   ensure_playground_clone
 
   log "Writing $PLAYGROUND_DIR/.env"
   cat > "$PLAYGROUND_DIR/.env" <<ENV
-PUBLIC_REALTIME_URL=ws://localhost:${REALTIME_PORT}/socket
-PUBLIC_SUPABASE_KEY=${jwt}
-PUBLIC_SUPABASE_URL=http://localhost:${REALTIME_PORT}
+PUBLIC_SUPABASE_URL=http://localhost:${KONG_PORT}
+PUBLIC_SUPABASE_KEY=${anon_jwt}
+PUBLIC_TEST_USER_EMAIL=${PLAYGROUND_TEST_USER_EMAIL}
+PUBLIC_TEST_USER_PASSWORD=${PLAYGROUND_TEST_USER_PASSWORD}
 ENABLE_PLAYGROUND=true
 ENV
 
@@ -440,7 +457,7 @@ Environment:
   REALTIME_PORT           Realtime's HTTP/WS port (default: 4000)
   PLAYGROUND_PORT         Playground's Next.js dev port (default: 3000)
   PLAYGROUND_TENANT_ID    tenant external_id (default: localhost)
-  PLAYGROUND_JWT_SECRET   tenant jwt_secret (default: multigres-playground-secret)
+  PLAYGROUND_JWT_SECRET   tenant jwt_secret (default: multigres-playground-jwt-secret-key)
   GATEWAY_HOST/PORT/USER/PASSWORD/DB   gateway target (same defaults as
                           multigres-realtime.sh / broadcast_smoke.exs)
   WAIT_TIMEOUT            seconds to wait for each health check (default: 60)
