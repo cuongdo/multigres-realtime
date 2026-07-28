@@ -50,6 +50,12 @@ GATEWAY_USER="${GATEWAY_USER:-postgres}"
 GATEWAY_PASSWORD="${GATEWAY_PASSWORD:-postgres}"
 GATEWAY_DB="${GATEWAY_DB:-postgres}"
 
+KONG_PORT="${KONG_PORT:-8000}"
+PLAYGROUND_NETWORK="multigres-playground-net"
+GOTRUE_IMAGE="${GOTRUE_IMAGE:-supabase/gotrue:v2.186.0}"
+POSTGREST_IMAGE="${POSTGREST_IMAGE:-postgrest/postgrest:v14.8}"
+KONG_IMAGE="${KONG_IMAGE:-kong:3.9.1}"
+
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-60}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,6 +79,21 @@ wait_for_http() {
     waited=$((waited + 2))
     if [ "$waited" -ge "$WAIT_TIMEOUT" ]; then
       die "$label did not become ready within ${WAIT_TIMEOUT}s ($url)"
+    fi
+  done
+}
+
+# Wait until container $1's Docker healthcheck reports "healthy", or die after
+# WAIT_TIMEOUT. (curl-based wait_for_http doesn't work for GoTrue/PostgREST,
+# which aren't published to the host — only Kong is.)
+wait_for_healthy() {
+  local container="$1" waited=0 status
+  until status="$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" \
+    && [ "$status" = "healthy" ]; do
+    sleep 2
+    waited=$((waited + 2))
+    if [ "$waited" -ge "$WAIT_TIMEOUT" ]; then
+      die "$container did not become healthy within ${WAIT_TIMEOUT}s (last status: ${status:-unknown})"
     fi
   done
 }
@@ -143,6 +164,76 @@ GRANT anon, authenticated, service_role TO authenticator;
 GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
 ALTER SCHEMA auth OWNER TO supabase_auth_admin;
 SQL
+}
+
+# Start GoTrue, PostgREST, and Kong on a dedicated network, all pointed at the
+# gateway (and, for Kong, at Realtime) via host.docker.internal. Only Kong
+# publishes a host port — GoTrue/PostgREST are reachable only through it,
+# matching the real self-hosted stack.
+start_auth_stack() {
+  docker network inspect "$PLAYGROUND_NETWORK" >/dev/null 2>&1 || \
+    docker network create "$PLAYGROUND_NETWORK" >/dev/null
+
+  log "Starting GoTrue"
+  docker rm -f playground-gotrue >/dev/null 2>&1 || true
+  docker run -d --name playground-gotrue \
+    --network "$PLAYGROUND_NETWORK" \
+    --add-host host.docker.internal:host-gateway \
+    --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:9999/health || exit 1" \
+    --health-interval=5s --health-timeout=5s --health-retries=5 \
+    -e GOTRUE_API_HOST=0.0.0.0 \
+    -e GOTRUE_API_PORT=9999 \
+    -e API_EXTERNAL_URL="http://localhost:${KONG_PORT}" \
+    -e GOTRUE_DB_DRIVER=postgres \
+    -e GOTRUE_DB_DATABASE_URL="postgres://supabase_auth_admin:${GATEWAY_PASSWORD}@host.docker.internal:${GATEWAY_PORT}/${GATEWAY_DB}" \
+    -e GOTRUE_SITE_URL="http://localhost:${PLAYGROUND_PORT}" \
+    -e GOTRUE_DISABLE_SIGNUP=false \
+    -e GOTRUE_JWT_ADMIN_ROLES=service_role \
+    -e GOTRUE_JWT_AUD=authenticated \
+    -e GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated \
+    -e GOTRUE_JWT_EXP=3600 \
+    -e GOTRUE_JWT_SECRET="$PLAYGROUND_JWT_SECRET" \
+    -e GOTRUE_MAILER_AUTOCONFIRM=true \
+    "$GOTRUE_IMAGE" >/dev/null
+
+  log "Starting PostgREST"
+  docker rm -f playground-postgrest >/dev/null 2>&1 || true
+  docker run -d --name playground-postgrest \
+    --network "$PLAYGROUND_NETWORK" \
+    --add-host host.docker.internal:host-gateway \
+    -e PGRST_DB_URI="postgres://authenticator:${GATEWAY_PASSWORD}@host.docker.internal:${GATEWAY_PORT}/${GATEWAY_DB}" \
+    -e PGRST_DB_SCHEMAS=public \
+    -e PGRST_DB_ANON_ROLE=anon \
+    -e PGRST_JWT_SECRET="$PLAYGROUND_JWT_SECRET" \
+    "$POSTGREST_IMAGE" >/dev/null
+
+  wait_for_healthy playground-gotrue
+  log "GoTrue is up"
+}
+
+# Render kong/kong.yml with the current run's JWTs and start Kong. Must be
+# called after $anon_jwt/$service_jwt are known.
+start_kong() {
+  local anon_jwt="$1" service_jwt="$2"
+  log "Rendering Kong config"
+  ANON_JWT="$anon_jwt" SERVICE_JWT="$service_jwt" \
+    envsubst '${ANON_JWT} ${SERVICE_JWT}' < "$SCRIPT_DIR/kong/kong.yml" > "$RUN_DIR/kong.yml"
+
+  log "Starting Kong on :$KONG_PORT"
+  docker rm -f playground-kong >/dev/null 2>&1 || true
+  docker run -d --name playground-kong \
+    --network "$PLAYGROUND_NETWORK" \
+    --add-host host.docker.internal:host-gateway \
+    -p "${KONG_PORT}:8000" \
+    -v "$RUN_DIR/kong.yml:/kong.yml:ro" \
+    -e KONG_DATABASE=off \
+    -e KONG_DECLARATIVE_CONFIG=/kong.yml \
+    -e KONG_PLUGINS=cors,key-auth \
+    --health-cmd="kong health" --health-interval=5s --health-timeout=5s --health-retries=5 \
+    "$KONG_IMAGE" >/dev/null
+
+  wait_for_healthy playground-kong
+  log "Kong is up"
 }
 
 # Clone the Playground repo and apply the local crash-fix patch — each step
