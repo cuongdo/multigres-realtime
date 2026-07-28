@@ -128,6 +128,20 @@ cmd_up() {
 
   wait_for_http "http://localhost:${REALTIME_PORT}/status" "Realtime"
   log "Realtime is up (logs: $RUN_DIR/realtime.log)"
+
+  log "Registering/updating the Multigres tenant and minting an anon JWT"
+  local jwt
+  if ! jwt="$(cd "$REALTIME_DIR" && \
+    GATEWAY_HOST="$GATEWAY_HOST" GATEWAY_PORT="$GATEWAY_PORT" \
+    GATEWAY_USER="$GATEWAY_USER" GATEWAY_PASSWORD="$GATEWAY_PASSWORD" GATEWAY_DB="$GATEWAY_DB" \
+    PLAYGROUND_TENANT_ID="$PLAYGROUND_TENANT_ID" PLAYGROUND_JWT_SECRET="$PLAYGROUND_JWT_SECRET" \
+    GEN_RPC_TCP_SERVER_PORT=0 GEN_RPC_TCP_CLIENT_PORT=0 \
+    mix run "$SETUP_SCRIPT" 2>"$RUN_DIR/playground_setup.log" | tail -1)"; then
+    die "playground_setup.exs failed — see $RUN_DIR/playground_setup.log"
+  fi
+
+  [ -n "$jwt" ] || die "playground_setup.exs did not print a JWT — see $RUN_DIR/playground_setup.log"
+  log "Minted anon JWT for tenant '${PLAYGROUND_TENANT_ID}'"
 }
 
 cmd_down() {
