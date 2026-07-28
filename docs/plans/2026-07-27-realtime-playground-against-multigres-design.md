@@ -129,7 +129,7 @@ Setup steps in the worktree, each skipped if already satisfied:
 - Write `.env` at the worktree root (always rewritten on `up`, since the JWT
   is fresh each time):
   ```
-  PUBLIC_REALTIME_URL=http://localhost:4000/socket
+  PUBLIC_REALTIME_URL=ws://localhost:4000/socket
   PUBLIC_SUPABASE_KEY=<freshly minted anon JWT>
   PUBLIC_SUPABASE_URL=http://localhost:4000   # placeholder; only read for the skipped login flow and a non-empty check
   ENABLE_PLAYGROUND=true                       # without this, "/" redirects to "/test" (Test Runner) and the Playground nav link doesn't render

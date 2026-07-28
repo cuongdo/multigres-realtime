@@ -697,7 +697,7 @@ ensure_playground_worktree() {
 
   log "Writing $PLAYGROUND_WORKTREE_DIR/.env"
   cat > "$PLAYGROUND_WORKTREE_DIR/.env" <<ENV
-PUBLIC_REALTIME_URL=http://localhost:${REALTIME_PORT}/socket
+PUBLIC_REALTIME_URL=ws://localhost:${REALTIME_PORT}/socket
 PUBLIC_SUPABASE_KEY=${jwt}
 PUBLIC_SUPABASE_URL=http://localhost:${REALTIME_PORT}
 ENABLE_PLAYGROUND=true
