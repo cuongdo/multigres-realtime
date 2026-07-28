@@ -217,15 +217,54 @@ ENV
 }
 
 cmd_down() {
-  die "cmd_down not yet implemented"
+  local with_cluster=false
+  for a in "$@"; do
+    case "$a" in
+      --with-cluster) with_cluster=true ;;
+      *) die "unknown flag for down: $a" ;;
+    esac
+  done
+
+  kill_pidfile "$RUN_DIR/playground.pid" "Playground"
+  kill_pidfile "$RUN_DIR/realtime.pid" "Realtime"
+
+  if [ "$with_cluster" = true ]; then
+    "$SCRIPT_DIR/multigres-realtime.sh" down
+  else
+    log "Multigres cluster left running (pass --with-cluster to also stop it)"
+  fi
 }
 
 cmd_logs() {
-  die "cmd_logs not yet implemented"
+  local which="${1:-all}"
+  case "$which" in
+    realtime)   tail -f "$RUN_DIR/realtime.log" ;;
+    playground) tail -f "$RUN_DIR/playground.log" ;;
+    all)        tail -f "$RUN_DIR/realtime.log" "$RUN_DIR/playground.log" ;;
+    *) die "unknown logs target: $which (expected realtime|playground|all)" ;;
+  esac
 }
 
 cmd_info() {
-  die "cmd_info not yet implemented"
+  cat <<INFO
+Realtime Playground is running against the Multigres gateway.
+
+  Playground   http://localhost:${PLAYGROUND_PORT}/playground
+  Realtime     http://localhost:${REALTIME_PORT}  (tenant: ${PLAYGROUND_TENANT_ID})
+  Gateway      ${GATEWAY_USER}@${GATEWAY_HOST}:${GATEWAY_PORT}/${GATEWAY_DB}
+
+  A fresh anon JWT is minted on every 'up' and written into
+  ${PLAYGROUND_WORKTREE_DIR}/.env — no manual copying needed.
+
+  Logs:
+    $0 logs             # both
+    $0 logs realtime
+    $0 logs playground
+
+  Tear down:
+    $0 down                 # stop Realtime + Playground, leave the cluster up
+    $0 down --with-cluster  # also stop the Multigres cluster
+INFO
 }
 
 usage() {
