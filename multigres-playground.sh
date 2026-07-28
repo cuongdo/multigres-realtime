@@ -401,6 +401,9 @@ cmd_down() {
   kill_pidfile "$RUN_DIR/playground.pid" "Playground"
   kill_pidfile "$RUN_DIR/realtime.pid" "Realtime"
 
+  log "Stopping GoTrue/PostgREST/Kong"
+  docker rm -f playground-kong playground-postgrest playground-gotrue >/dev/null 2>&1 || true
+
   if [ "$with_cluster" = true ]; then
     "$SCRIPT_DIR/multigres-realtime.sh" down
   else
@@ -423,11 +426,15 @@ cmd_info() {
 Realtime Playground is running against the Multigres gateway.
 
   Playground   http://localhost:${PLAYGROUND_PORT}/playground
+  Test Runner  http://localhost:${PLAYGROUND_PORT}/test
+  Kong         http://localhost:${KONG_PORT}  (auth/rest/realtime routing)
   Realtime     http://localhost:${REALTIME_PORT}  (tenant: ${PLAYGROUND_TENANT_ID})
   Gateway      ${GATEWAY_USER}@${GATEWAY_HOST}:${GATEWAY_PORT}/${GATEWAY_DB}
 
-  A fresh anon JWT is minted on every 'up' and written into
-  ${PLAYGROUND_WORKTREE_DIR}/.env — no manual copying needed.
+  Test user    ${PLAYGROUND_TEST_USER_EMAIL} / ${PLAYGROUND_TEST_USER_PASSWORD}
+
+  Fresh JWTs are minted on every 'up' and written into
+  ${PLAYGROUND_DIR}/.env — no manual copying needed.
 
   Logs:
     $0 logs             # both
@@ -435,7 +442,7 @@ Realtime Playground is running against the Multigres gateway.
     $0 logs playground
 
   Tear down:
-    $0 down                 # stop Realtime + Playground, leave the cluster up
+    $0 down                 # stop everything except the cluster
     $0 down --with-cluster  # also stop the Multigres cluster
 INFO
 }
@@ -460,6 +467,11 @@ Environment:
   PLAYGROUND_JWT_SECRET   tenant jwt_secret (default: multigres-playground-jwt-secret-key)
   GATEWAY_HOST/PORT/USER/PASSWORD/DB   gateway target (same defaults as
                           multigres-realtime.sh / broadcast_smoke.exs)
+  KONG_PORT                     Kong's published port (default: 8000)
+  PLAYGROUND_TEST_USER_EMAIL    persistent test user email
+                                 (default: playground@localhost)
+  PLAYGROUND_TEST_USER_PASSWORD persistent test user password
+                                 (default: multigres-playground-password)
   WAIT_TIMEOUT            seconds to wait for each health check (default: 60)
 USAGE
 }
