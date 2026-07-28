@@ -1,5 +1,10 @@
 # Realtime Playground Against Multigres Implementation Plan
 
+**Superseded by** `docs/plans/2026-07-28-realtime-playground-test-runner-against-multigres-plan.md`,
+which builds on the work already done here (Tasks 1-3 below still apply as-implemented)
+and adds GoTrue/PostgREST/Kong for the Test Runner tab, dropping the worktree + URL patch
+(Task 1) in favor of Kong.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** One command (`./multigres-playground.sh up`) brings up a Multigres
