@@ -125,6 +125,29 @@ kill_pidfile() {
 # Commands
 # ----------------------------------------------------------------------------
 
+# Create the extra Postgres roles GoTrue and PostgREST need to connect as.
+# multigres-realtime.sh already creates anon/authenticated/service_role/etc. for
+# Realtime's own compat surface; these two are specific to adding GoTrue+PostgREST.
+prepare_gateway_roles() {
+  log "Ensuring GoTrue/PostgREST roles exist on the gateway"
+  PGPASSWORD="$GATEWAY_PASSWORD" psql -v ON_ERROR_STOP=1 \
+    -h "$GATEWAY_HOST" -p "$GATEWAY_PORT" -U "$GATEWAY_USER" -d "$GATEWAY_DB" <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
+    CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD '${GATEWAY_PASSWORD}';
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+    CREATE ROLE supabase_auth_admin NOINHERIT CREATEROLE LOGIN PASSWORD '${GATEWAY_PASSWORD}';
+  END IF;
+END
+\$\$;
+GRANT anon, authenticated, service_role TO authenticator;
+GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
+ALTER SCHEMA auth OWNER TO supabase_auth_admin;
+SQL
+}
+
 # Clone the Playground repo, create its worktree, and apply the
 # PUBLIC_REALTIME_URL patch — each step skipped if already done.
 ensure_playground_worktree() {
@@ -158,6 +181,7 @@ cmd_up() {
 
   log "Bringing up the Multigres cluster"
   "$SCRIPT_DIR/multigres-realtime.sh" up
+  prepare_gateway_roles
 
   log "Ensuring Realtime's metadata DB is running"
   (cd "$REALTIME_DIR" && mise run db-start)
