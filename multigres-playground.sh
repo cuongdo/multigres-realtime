@@ -248,6 +248,35 @@ start_kong() {
   log "Kong is up"
 }
 
+# Smoke-test Kong's realtime-v1 route with a real WebSocket upgrade
+# handshake. Catches Kong routing regressions (wrong tenant resolution,
+# stripped apikey) that a plain HTTP check on /rest or /auth wouldn't —
+# Realtime rejects the *upgrade* itself (403/401, not 101) when its
+# Host-header tenant lookup or apikey check fails, before any channel/test
+# logic runs. Retries on no-response (curl prints "000") to ride out
+# Realtime's cold-start latency on the very first request after boot; any
+# actual HTTP status back is a definitive routing/auth answer, so that
+# fails immediately rather than retrying for WAIT_TIMEOUT.
+verify_realtime_route() {
+  local anon_jwt="$1" waited=0 http_status
+  log "Verifying Realtime is reachable through Kong (WebSocket handshake)"
+  while true; do
+    http_status="$(curl -s --http1.1 --max-time 10 -o /dev/null -w '%{http_code}' \
+      -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+      -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'Sec-WebSocket-Version: 13' \
+      "http://localhost:${KONG_PORT}/realtime/v1/websocket?apikey=${anon_jwt}&vsn=1.0.0" 2>/dev/null || true)"
+    [ "$http_status" = "101" ] && break
+    if [ -n "$http_status" ] && [ "$http_status" != "000" ]; then
+      die "Realtime WebSocket handshake through Kong failed (HTTP $http_status, expected 101 Switching Protocols) — check Kong's realtime-v1 route (preserve_host/hide_credentials in kong/kong.yml) and $RUN_DIR/realtime.log for TenantNotFound/MissingAPIKey"
+    fi
+    waited=$((waited + 10))
+    if [ "$waited" -ge "$WAIT_TIMEOUT" ]; then
+      die "Realtime WebSocket handshake through Kong did not respond within ${WAIT_TIMEOUT}s — check $RUN_DIR/realtime.log"
+    fi
+  done
+  log "  ok (101 Switching Protocols)"
+}
+
 # Create/update the fixture schema Test Runner's auth-gated suites need
 # (tables, RLS, triggers, publication entries) by running realtime-check.ts
 # *in place* from the Realtime checkout — it already contains this logic
@@ -356,6 +385,7 @@ cmd_up() {
   log "Minted anon + service_role JWTs for tenant '${PLAYGROUND_TENANT_ID}'"
 
   start_kong "$anon_jwt" "$service_jwt"
+  verify_realtime_route "$anon_jwt"
   run_fixture_setup "$anon_jwt" "$service_jwt"
   create_test_user "$service_jwt"
 
