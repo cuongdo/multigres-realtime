@@ -32,13 +32,25 @@ services:
     routes:
       - name: realtime-v1-all
         strip_path: true
+        # Realtime resolves its tenant from the first label of the Host
+        # header it receives (see docs on PLAYGROUND_TENANT_ID="localhost"
+        # in multigres-playground.sh). Without preserve_host, Kong rewrites
+        # the upstream Host header to this service's own host
+        # (host.docker.internal), so Realtime would see tenant "host"
+        # instead of "localhost" and reject every connection.
+        preserve_host: true
         paths:
           - /realtime/v1/
     plugins:
       - name: cors
       - name: key-auth
         config:
-          hide_credentials: true
+          # Unlike GoTrue/PostgREST, Realtime does its own independent
+          # apikey/JWT check — it needs to see the apikey Kong's key-auth
+          # already validated, not have it stripped (matches supabase's
+          # own self-hosted kong.yml, which also sets this false only for
+          # the realtime-v1 route).
+          hide_credentials: false
 
 consumers:
   - username: anon-key
